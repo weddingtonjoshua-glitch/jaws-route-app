@@ -1,3 +1,4 @@
+"use client";
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as XLSX from "xlsx";
 
@@ -158,7 +159,7 @@ export default function JAWSApp() {
         publishedAt: new Date().toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" }),
         publishedBy: "Dispatch",
       };
-      await window.storage.set("jaws-shared-route", JSON.stringify(payload), true);
+      await fetch("/api/route", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       setPublishStatus("published");
       setTimeout(() => setPublishStatus(null), 4000);
     } catch {
@@ -171,9 +172,10 @@ export default function JAWSApp() {
   const loadSharedRoute = async () => {
     setCheckingShared(true);
     try {
-      const result = await window.storage.get("jaws-shared-route", true);
-      if (!result?.value) { setCheckingShared(false); return; }
-      const payload = JSON.parse(result.value);
+      const res = await fetch("/api/route");
+      const data = await res.json();
+      if (!data?.route) { setCheckingShared(false); return; }
+      const payload = data.route;
       setStops(payload.stops);
       setSortDir(payload.sortDir || "E→W");
       setDriverIdx(0);
@@ -183,16 +185,16 @@ export default function JAWSApp() {
     setCheckingShared(false);
   };
 
-  // Check on mount if there's a shared route waiting
+  // Check on mount if there's a shared route waiting (from API)
   useEffect(() => {
     const check = async () => {
       try {
-        const result = await window.storage.get("jaws-shared-route", true);
-        if (result?.value) {
-          const payload = JSON.parse(result.value);
-          setSharedRoute({ publishedAt: payload.publishedAt, count: payload.stops.length });
+        const res = await fetch("/api/route");
+        const data = await res.json();
+        if (data?.route) {
+          setSharedRoute({ publishedAt: data.route.publishedAt, count: data.route.stops.length });
         }
-      } catch {}
+      } catch(e) { console.log("No shared route yet"); }
     };
     check();
   }, []);
@@ -322,43 +324,53 @@ export default function JAWSApp() {
     .replace(/\s*(#)\s*/g, " #")                   // normalize unit #
     .trim();
 
-  // Load geoDb from persistent storage on mount — seed always present, user edits override
+  // Load geoDb from localStorage on mount — seed always base, user edits on top
   useEffect(() => {
-    const load = async () => {
-      try {
-        // Re-index seed through the normalizer so keys always match
-        const normalizedSeed = {};
-        Object.entries(SEED_GEO).forEach(([k, v]) => {
-          normalizedSeed[k.toLowerCase().replace(/,?\s*\bus(a)?\b\.?$/i,"").replace(/,\s*(\d{5}(-\d{4})?)\s*$/g," $1").replace(/\bfl\b\.?/g,"fl").replace(/\b(st|dr|rd|ln|ct|ave|blvd|hwy|co|n|s|e|w)\./g,"$1").replace(/[,]+/g," ").replace(/\s+/g," ").replace(/\s*(#)\s*/g," #").trim()] = v;
-        });
-        const result = await window.storage.get("jaws-geo-db");
-        const userEdits = result?.value ? JSON.parse(result.value) : {};
-        setGeoDb({ ...normalizedSeed, ...userEdits });
-      } catch {
-        const normalizedSeed = {};
-        Object.entries(SEED_GEO).forEach(([k, v]) => {
-          normalizedSeed[k.toLowerCase().replace(/,?\s*\bus(a)?\b\.?$/i,"").replace(/,\s*(\d{5}(-\d{4})?)\s*$/g," $1").replace(/\bfl\b\.?/g,"fl").replace(/\b(st|dr|rd|ln|ct|ave|blvd|hwy|co|n|s|e|w)\./g,"$1").replace(/[,]+/g," ").replace(/\s+/g," ").replace(/\s*(#)\s*/g," #").trim()] = v;
-        });
-        setGeoDb({ ...normalizedSeed });
+    try {
+      const norm = (k) => k.toLowerCase()
+        .replace(/,?\s*\bus(a)?\b\.?$/i,"")
+        .replace(/,\s*(\d{5}(-\d{4})?)\s*$/g," $1")
+        .replace(/\bfl\b\.?/g,"fl")
+        .replace(/\b(st|dr|rd|ln|ct|ave|blvd|hwy|co|n|s|e|w)\./g,"$1")
+        .replace(/[,]+/g," ").replace(/\s+/g," ")
+        .replace(/\s*(#)\s*/g," #").trim();
+      const normalizedSeed = {};
+      Object.entries(SEED_GEO).forEach(([k, v]) => { normalizedSeed[norm(k)] = v; });
+      let userEdits = {};
+      if (typeof window !== "undefined") {
+        const stored = localStorage.getItem("jaws-geo-db");
+        if (stored) userEdits = JSON.parse(stored);
       }
-      setDbLoaded(true);
-    };
-    load();
+      setGeoDb({ ...normalizedSeed, ...userEdits });
+    } catch(e) {
+      console.error("Load error:", e);
+      const normalizedSeed = {};
+      const norm = (k) => k.toLowerCase().replace(/,?\s*\bus(a)?\b\.?$/i,"").replace(/,\s*(\d{5}(-\d{4})?)\s*$/g," $1").replace(/\bfl\b\.?/g,"fl").replace(/[,]+/g," ").replace(/\s+/g," ").trim();
+      Object.entries(SEED_GEO).forEach(([k, v]) => { normalizedSeed[norm(k)] = v; });
+      setGeoDb(normalizedSeed);
+    }
+    setDbLoaded(true);
   }, []);
 
-  // Save geoDb — persist only user-added/edited entries (delta over seed)
-  const saveGeoDb = async (db) => {
+  // Save geoDb — persist user edits to localStorage
+  const saveGeoDb = (db) => {
     setGeoDb(db);
-    const delta = {};
-    Object.entries(db).forEach(([k, v]) => {
-      const seed = SEED_GEO[k];
-      if (!seed || seed.lat !== v.lat || seed.lng !== v.lng) delta[k] = v;
-    });
     try {
-      await window.storage.set("jaws-geo-db", JSON.stringify(delta));
+      const delta = {};
+      Object.entries(db).forEach(([k, v]) => {
+        const seedVal = Object.values(SEED_GEO).find(sv => 
+          Math.abs(sv.lat - v.lat) < 0.000001 && Math.abs(sv.lng - v.lng) < 0.000001
+        );
+        if (!seedVal) delta[k] = v;
+      });
+      if (typeof window !== "undefined") {
+        localStorage.setItem("jaws-geo-db", JSON.stringify(delta));
+      }
       setDbSaved(true);
       setTimeout(() => setDbSaved(false), 2000);
-    } catch {}
+    } catch(e) {
+      console.error("Storage error:", e);
+    }
   };
 
   // Resolve coordinates for an address — checks geoDb first, falls back to estimateCoords
