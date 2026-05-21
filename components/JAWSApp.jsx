@@ -1420,20 +1420,6 @@ export default function JAWSApp() {
 
   // ─── GEO DB TAB ─────────────────────────────────────────────────────────────
 
-  // Initialize the DB picker map when editingAddr changes
-  useEffect(() => {
-    if (!editingAddr) return;
-
-    const initMap = async () => {
-      // Nothing to init — using iframe embed instead
-    };
-
-    setTimeout(initMap, 50);
-    return () => {
-      if (dbLeaflet.current) { dbLeaflet.current.remove(); dbLeaflet.current = null; }
-    };
-  }, [editingAddr]);
-
   const saveCoord = () => {
     const lat = parseFloat(latInput);
     const lng = parseFloat(lngInput);
