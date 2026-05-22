@@ -142,6 +142,8 @@ export default function JAWSApp() {
   const [publishStatus, setPublishStatus] = useState(null); // null | "publishing" | "published" | "error"
   const [sharedRoute, setSharedRoute] = useState(null);     // loaded shared route metadata
   const [checkingShared, setCheckingShared] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [addForm, setAddForm] = useState({ address: "", gateCode: "", lat: "", lng: "" });
 
   // Publish current route to shared storage — all users of this artifact can load it
   const publishRoute = async () => {
@@ -630,6 +632,137 @@ export default function JAWSApp() {
     textTransform: "uppercase", display: "block", marginBottom: 5, fontFamily: FONTS.sans,
   };
 
+  // ─── ADD PICKUP ─────────────────────────────────────────────────────────────
+
+  const addPickup = () => {
+    const addr = addForm.address.trim();
+    if (!addr) return;
+    const latVal = parseFloat(addForm.lat);
+    const lngVal = parseFloat(addForm.lng);
+    const hasCoords = !isNaN(latVal) && !isNaN(lngVal);
+    let geocoded;
+    if (hasCoords) {
+      geocoded = { lat: latVal, lng: lngVal, fromDb: true, resolvedAs: addr };
+      const key = addrKey(addr);
+      const newDb = { ...geoDb, [key]: { lat: latVal, lng: lngVal } };
+      saveGeoDb(newDb);
+    } else {
+      geocoded = resolveCoords(addr);
+    }
+    const newStop = {
+      id: `manual-${Date.now()}`,
+      address: addr,
+      name: "",
+      gateCode: addForm.gateCode.trim(),
+      notes: "",
+      geocoded,
+      status: "pending",
+      timestamp: null,
+      photo: null,
+    };
+    setStops(prev => [...prev, newStop]);
+    setAddForm({ address: "", gateCode: "", lat: "", lng: "" });
+    setShowAddForm(false);
+  };
+
+  const AddPickupPanel = () => (
+    <div style={{ marginTop: 10 }}>
+      {!showAddForm ? (
+        <button
+          onClick={() => setShowAddForm(true)}
+          style={{ ...btn(C.s2, { width: "100%", border: `2px dashed ${C.border}`, color: C.blue, fontSize: 14 }) }}
+        >
+          + Add pickup stop
+        </button>
+      ) : (
+        <div style={{ background: C.surface, border: `2px solid ${C.blue}`, borderRadius: 10, padding: "14px 16px", marginBottom: 10 }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: C.blue, marginBottom: 12 }}>+ Add pickup stop</div>
+
+          <div style={{ marginBottom: 10 }}>
+            <span style={lbl}>Address <span style={{ color: C.red }}>*</span></span>
+            <input
+              value={addForm.address}
+              onChange={e => setAddForm(f => ({ ...f, address: e.target.value }))}
+              onKeyDown={e => { if (e.key === "Enter" && addForm.address.trim()) addPickup(); }}
+              placeholder="123 Gulf Shore Dr, Destin, FL 32541"
+              autoFocus
+              style={{ width: "100%", boxSizing: "border-box", background: C.white, border: `1px solid ${C.border}`, borderRadius: 7, padding: "9px 11px", fontSize: 14, fontFamily: FONTS.sans, outline: "none" }}
+            />
+          </div>
+
+          <div style={{ marginBottom: 10 }}>
+            <span style={lbl}>Gate code <span style={{ color: C.muted, fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>(optional)</span></span>
+            <input
+              value={addForm.gateCode}
+              onChange={e => setAddForm(f => ({ ...f, gateCode: e.target.value }))}
+              placeholder="e.g. 4521"
+              style={{ width: "100%", boxSizing: "border-box", background: C.white, border: `1px solid ${C.border}`, borderRadius: 7, padding: "9px 11px", fontSize: 16, fontFamily: FONTS.mono, letterSpacing: 3, outline: "none" }}
+            />
+          </div>
+
+          <div style={{ marginBottom: 6 }}>
+            <span style={lbl}>Coordinates <span style={{ color: C.muted, fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>(optional — skips geocoding)</span></span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <span style={{ ...lbl, fontSize: 10 }}>Latitude</span>
+                <input
+                  value={addForm.lat}
+                  onChange={e => {
+                    const v = e.target.value;
+                    const m = v.match(/^\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\s*$/);
+                    if (m) { setAddForm(f => ({ ...f, lat: m[1], lng: m[2] })); return; }
+                    setAddForm(f => ({ ...f, lat: v }));
+                  }}
+                  placeholder="30.385432"
+                  style={{ width: "100%", boxSizing: "border-box", background: C.white, border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 14, fontFamily: FONTS.mono, outline: "none" }}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <span style={{ ...lbl, fontSize: 10 }}>Longitude</span>
+                <input
+                  value={addForm.lng}
+                  onChange={e => setAddForm(f => ({ ...f, lng: e.target.value }))}
+                  placeholder="-86.384521"
+                  style={{ width: "100%", boxSizing: "border-box", background: C.white, border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 14, fontFamily: FONTS.mono, outline: "none" }}
+                />
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 5 }}>
+              💡 Paste "30.385432, -86.384521" into Latitude — splits automatically
+            </div>
+          </div>
+
+          {addForm.lat && addForm.lng && !isNaN(parseFloat(addForm.lat)) && !isNaN(parseFloat(addForm.lng)) && (
+            <div style={{ display: "inline-flex", alignItems: "center", padding: "3px 10px", borderRadius: 20, background: C.greenBg, color: C.green, fontSize: 11, fontWeight: 600, fontFamily: FONTS.mono, letterSpacing: 0.5, marginBottom: 10 }}>
+              📌 Coordinates set — exact pin
+            </div>
+          )}
+          {(!addForm.lat || !addForm.lng) && addForm.address.trim() && (
+            <div style={{ display: "inline-flex", alignItems: "center", padding: "3px 10px", borderRadius: 20, background: C.amberBg, color: "#92400E", fontSize: 11, fontWeight: 600, fontFamily: FONTS.mono, letterSpacing: 0.5, marginBottom: 10 }}>
+              ~ No coords — will estimate from address
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button
+              onClick={addPickup}
+              disabled={!addForm.address.trim()}
+              style={{ ...btn(C.green, { flex: 2, color: "#fff", opacity: !addForm.address.trim() ? 0.5 : 1 }) }}
+            >
+              ✓ Add to route
+            </button>
+            <button
+              onClick={() => { setShowAddForm(false); setAddForm({ address: "", gateCode: "", lat: "", lng: "" }); }}
+              style={{ ...btn(C.s2, { flex: 1, border: `1px solid ${C.border}`, color: C.muted }) }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   // ─── SETUP TAB ──────────────────────────────────────────────────────────────
 
   const SetupTab = () => (
@@ -761,6 +894,7 @@ export default function JAWSApp() {
               ↺ Reset route
             </button>
           </div>
+          {AddPickupPanel()}
         </>
       )}
     </div>
@@ -770,10 +904,13 @@ export default function JAWSApp() {
 
   const RouteTab = () => {
     if (!stops.length) return (
-      <div style={{ textAlign: "center", color: C.muted, paddingTop: 60, padding: "60px 20px 20px" }}>
-        <div style={{ fontSize: 40 }}>🗺️</div>
-        <div style={{ fontWeight: 600, fontSize: 16, marginTop: 12 }}>No stops loaded</div>
-        <div style={{ fontSize: 13, marginTop: 4 }}>Go to Setup to upload a route list</div>
+      <div style={{ padding: "60px 14px 20px" }}>
+        <div style={{ textAlign: "center", color: C.muted, marginBottom: 20 }}>
+          <div style={{ fontSize: 40 }}>🗺️</div>
+          <div style={{ fontWeight: 600, fontSize: 16, marginTop: 12 }}>No stops loaded</div>
+          <div style={{ fontSize: 13, marginTop: 4 }}>Go to Setup to upload a route list, or add a stop below</div>
+        </div>
+        {AddPickupPanel()}
       </div>
     );
 
@@ -802,6 +939,8 @@ export default function JAWSApp() {
             ↓ Export CSV
           </button>
         </div>
+
+        {AddPickupPanel()}
 
         {sortedStops.map((stop, i) => (
           <div key={stop.id} style={{
@@ -1420,6 +1559,20 @@ export default function JAWSApp() {
 
   // ─── GEO DB TAB ─────────────────────────────────────────────────────────────
 
+  // Initialize the DB picker map when editingAddr changes
+  useEffect(() => {
+    if (!editingAddr) return;
+
+    const initMap = async () => {
+      // Nothing to init — using iframe embed instead
+    };
+
+    setTimeout(initMap, 50);
+    return () => {
+      if (dbLeaflet.current) { dbLeaflet.current.remove(); dbLeaflet.current = null; }
+    };
+  }, [editingAddr]);
+
   const saveCoord = () => {
     const lat = parseFloat(latInput);
     const lng = parseFloat(lngInput);
@@ -1614,142 +1767,4 @@ export default function JAWSApp() {
           <div style={{ textAlign: "center", color: C.muted, padding: "40px 20px" }}>
             <div style={{ fontSize: 32 }}>📋</div>
             <div style={{ fontWeight: 600, marginTop: 10 }}>Load a route in Setup first</div>
-            <div style={{ fontSize: 13, marginTop: 4 }}>All addresses from your spreadsheet will appear here</div>
-          </div>
-        )}
-
-        {allAddrs.length > 0 && (
-          <>
-            <span style={lbl}>{allAddrs.length} addresses</span>
-            {allAddrs.map(addr => {
-              const key = addrKey(addr);
-              const stored = geoDb[key];
-              const isEditing = editingAddr === addr;
-              return (
-                <div key={key} style={card({
-                  padding: "10px 12px", marginBottom: 7,
-                  borderLeft: `4px solid ${stored ? C.green : C.border}`,
-                  opacity: isEditing ? 1 : 1,
-                })}>
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 3, wordBreak: "break-word" }}>{addr}</div>
-                      {stored ? (
-                        <div style={{ fontFamily: FONTS.mono, fontSize: 11, color: C.green }}>
-                          ✓ {stored.lat.toFixed(5)}, {stored.lng.toFixed(5)}
-                        </div>
-                      ) : (
-                        <div style={{ fontSize: 11, color: C.amber }}>
-                          No match — key: <span style={{ fontFamily: FONTS.mono }}>{addrKey(addr).slice(0, 50)}</span>
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                      <button onClick={() => {
-                        setEditingAddr(addr);
-                        setLatInput(stored ? stored.lat.toFixed(6) : "");
-                        setLngInput(stored ? stored.lng.toFixed(6) : "");
-                      }} style={{ ...btn(stored ? C.s2 : C.amber, { padding: "5px 10px", fontSize: 12, border: `1px solid ${stored ? C.border : C.amber}`, color: stored ? C.text : "#000" }) }}>
-                        {stored ? "✎ Edit" : "📌 Pin"}
-                      </button>
-                      {stored && (
-                        <button onClick={() => deleteCoord(addr)}
-                          style={{ ...btn(C.s2, { padding: "5px 8px", fontSize: 12, border: `1px solid ${C.border}`, color: C.red }) }}>
-                          ✕
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </>
-        )}
-      </div>
-    );
-  };
-
-  // ─── ROOT RENDER ────────────────────────────────────────────────────────────
-
-  return (
-    <div style={{ background: C.bg, minHeight: "100vh", color: C.text, fontFamily: FONTS.sans, maxWidth: 600, margin: "0 auto", paddingBottom: 40 }}>
-      <input ref={photoRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handlePhoto} />
-      <input id="xlsx-input" ref={xlsxRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }} onChange={e => e.target.files[0] && parseExcel(e.target.files[0])} />
-
-      {/* HEADER */}
-      <div style={{
-        background: C.text, padding: "14px 18px", display: "flex",
-        alignItems: "center", justifyContent: "space-between",
-        position: "sticky", top: 0, zIndex: 100, borderBottom: `3px solid ${C.amber}`,
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{
-            width: 40, height: 40, borderRadius: "50%", background: C.amber,
-            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22,
-          }}>🦈</div>
-          <div>
-            <div style={{ fontSize: 22, fontWeight: 800, color: C.white, letterSpacing: 2, lineHeight: 1 }}>JAWS</div>
-            <div style={{ fontSize: 10, color: "#9CA3AF", letterSpacing: 3, fontWeight: 600 }}>SERVICES INC.</div>
-          </div>
-        </div>
-        {stops.length > 0 && (
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontFamily: FONTS.mono, fontSize: 22, fontWeight: 800, color: allDone ? C.green : C.white, lineHeight: 1 }}>
-              {completedCount}/{stops.length}
-            </div>
-            <div style={{ fontSize: 10, color: "#9CA3AF", letterSpacing: 2 }}>COLLECTED</div>
-          </div>
-        )}
-      </div>
-
-      {/* Shared route banner — shown when a route has been published */}
-      {sharedRoute && !stops.length && (
-        <div style={{
-          background: "#EFF6FF", borderBottom: "1px solid #BFDBFE",
-          padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
-        }}>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "#1E40AF" }}>
-              📡 Route ready — {sharedRoute.count} stops
-            </div>
-            <div style={{ fontSize: 11, color: "#3B82F6" }}>Published {sharedRoute.publishedAt}</div>
-          </div>
-          <button
-            onClick={loadSharedRoute}
-            disabled={checkingShared}
-            style={{ ...btn("#3B82F6", { color: "#fff", fontSize: 13, padding: "8px 14px", flexShrink: 0 }) }}
-          >
-            {checkingShared ? "Loading..." : "Load route →"}
-          </button>
-        </div>
-      )}
-      <div style={{ display: "flex", background: C.white, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 67, zIndex: 99 }}>
-        {[
-          { id: "setup",   icon: "📋", label: "Setup" },
-          { id: "route",   icon: "🗺️", label: "Route" },
-          { id: "driver",  icon: "🚛", label: "Driver" },
-          { id: "geodb",   icon: "📌", label: "Geo DB" },
-          { id: "summary", icon: "📊", label: "Summary" },
-        ].map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{
-            flex: 1, padding: "10px 2px", background: "transparent", border: "none",
-            borderBottom: tab === t.id ? `3px solid ${C.amber}` : "3px solid transparent",
-            color: tab === t.id ? C.text : C.muted, fontSize: 11, fontWeight: tab === t.id ? 700 : 500,
-            cursor: "pointer", fontFamily: FONTS.sans, marginBottom: -1,
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-          }}>
-            <span>{t.icon}</span> {t.label}
-          </button>
-        ))}
-      </div>
-
-      {tab === "setup"   && SetupTab()}
-      {tab === "route"   && RouteTab()}
-      {tab === "driver"  && DriverTab()}
-      {tab === "geodb"   && GeoDbTab()}
-      {tab === "summary" && SummaryTab()}
-
-      <style>{`@keyframes gps-pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }`}</style>
-    </div>
-  );
-}
+            <div style={{ fontSize: 13, marginTop: 4 }}>A
