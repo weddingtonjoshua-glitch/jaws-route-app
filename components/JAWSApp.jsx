@@ -122,7 +122,12 @@ const FONTS = {
 
 export default function JAWSApp() {
   const [tab, setTab] = useState("setup");
-  const [stops, setStops] = useState([]);
+  const [stops, setStops] = useState(() => {
+  try {
+    const s = typeof window !== "undefined" && localStorage.getItem("jaws-stops");
+    return s ? JSON.parse(s) : [];
+  } catch { return []; }
+});
   const [sortDir, setSortDir] = useState("E→W");
   const [geocoding, setGeocoding] = useState(false);
   const [geoProgress, setGeoProgress] = useState(0);
@@ -388,7 +393,14 @@ export default function JAWSApp() {
     // Fall back to street-name estimator
     return estimateCoords(address);
   }, [geoDb]);
-
+// Persist route to localStorage so it survives refresh/close
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const saveable = stops.map(s => ({ ...s, photo: null }));
+      localStorage.setItem("jaws-stops", JSON.stringify(saveable));
+    } catch(e) { console.error("Route save error:", e); }
+  }, [stops]);
   // When geoDb changes (new pin saved), refresh all stop coordinates immediately
   useEffect(() => {
     if (!dbLoaded || !stops.length) return;
