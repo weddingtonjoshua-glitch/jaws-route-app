@@ -123,15 +123,20 @@ const FONTS = {
 export default function JAWSApp() {
   const [tab, setTab] = useState("setup");
   const [stops, setStops] = useState(() => {
-  try {
-    const s = typeof window !== "undefined" && localStorage.getItem("jaws-stops");
-    return s ? JSON.parse(s) : [];
-  } catch { return []; }
-});
+    try {
+      const s = typeof window !== "undefined" && localStorage.getItem("jaws-stops");
+      return s ? JSON.parse(s) : [];
+    } catch { return []; }
+  });
   const [sortDir, setSortDir] = useState("E→W");
   const [geocoding, setGeocoding] = useState(false);
   const [geoProgress, setGeoProgress] = useState(0);
-  const [driverIdx, setDriverIdx] = useState(0);
+  const [driverIdx, setDriverIdx] = useState(() => {
+    try {
+      const i = typeof window !== "undefined" && localStorage.getItem("jaws-driver-idx");
+      return i ? parseInt(i, 10) : 0;
+    } catch { return 0; }
+  });
   const [tracking, setTracking] = useState(false);
   const [driverPos, setDriverPos] = useState(null);
   const [photoForStop, setPhotoForStop] = useState(null);
@@ -205,6 +210,42 @@ export default function JAWSApp() {
     };
     check();
   }, []);
+
+  // Push a single stop status update to Redis (non-blocking)
+  const syncStopToRedis = async (id, patch) => {
+    try {
+      await fetch("/api/route", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, patch }),
+      });
+    } catch(e) { console.warn("Sync failed:", e); }
+  };
+
+  // Poll Redis every 10s — merge remote statuses into local state
+  // Remote wins on status/timestamp; local wins on photo (not stored in Redis)
+  useEffect(() => {
+    if (!stops.length) return;
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/route");
+        const data = await res.json();
+        if (!data?.route?.stops) return;
+        setStops(prev => prev.map(local => {
+          const remote = data.route.stops.find(r => r.id === local.id);
+          if (!remote) return local;
+          // Only update if remote is "more complete" than local
+          const order = { pending: 0, claimed: 1, complete: 2 };
+          if ((order[remote.status] ?? 0) > (order[local.status] ?? 0)) {
+            return { ...local, status: remote.status, timestamp: remote.timestamp ?? local.timestamp };
+          }
+          return local;
+        }));
+      } catch(e) { /* silent */ }
+    };
+    const interval = setInterval(poll, 10000);
+    return () => clearInterval(interval);
+  }, [stops.length]);
 
   // ─── SEED GEO DATABASE (verified coordinates) ───────────────────────────────
   const SEED_GEO = {
@@ -393,7 +434,8 @@ export default function JAWSApp() {
     // Fall back to street-name estimator
     return estimateCoords(address);
   }, [geoDb]);
-// Persist route to localStorage so it survives refresh/close
+
+  // Persist route + collection progress — survives app close
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -401,6 +443,22 @@ export default function JAWSApp() {
       localStorage.setItem("jaws-stops", JSON.stringify(saveable));
     } catch(e) { console.error("Route save error:", e); }
   }, [stops]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try { localStorage.setItem("jaws-driver-idx", String(driverIdx)); }
+    catch(e) { console.error("Index save error:", e); }
+  }, [driverIdx]);
+
+  const clearRoute = () => {
+    if (!window.confirm("Clear route and all collection progress? Do this only after the summary has been sent.")) return;
+    setStops([]);
+    setDriverIdx(0);
+    localStorage.removeItem("jaws-stops");
+    localStorage.removeItem("jaws-driver-idx");
+    setTab("setup");
+  };
+
   // When geoDb changes (new pin saved), refresh all stop coordinates immediately
   useEffect(() => {
     if (!dbLoaded || !stops.length) return;
@@ -516,6 +574,7 @@ export default function JAWSApp() {
   const markComplete = (id) => {
     const t = new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
     updateStop(id, { status: "complete", timestamp: t });
+    syncStopToRedis(id, { status: "complete", timestamp: t });
     const idx = sortedStops.findIndex(s => s.id === id);
     const nxt = sortedStops.findIndex((s, i) => i > idx && s.status === "pending");
     if (nxt >= 0) setDriverIdx(nxt);
@@ -956,11 +1015,15 @@ export default function JAWSApp() {
 
         {sortedStops.map((stop, i) => (
           <div key={stop.id} style={{
-            ...card({ borderLeft: `4px solid ${stop.status === "complete" ? C.green : C.amber}`, opacity: stop.status === "complete" ? 0.6 : 1, padding: "12px 14px" }),
+            ...card({
+              borderLeft: `4px solid ${stop.status === "complete" ? C.green : stop.status === "claimed" ? C.amber : C.border}`,
+              opacity: stop.status === "complete" ? 0.6 : 1,
+              padding: "12px 14px",
+            }),
           }}>
             <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-              <div style={{ fontFamily: FONTS.mono, fontSize: 18, fontWeight: 700, color: stop.status === "complete" ? C.green : C.amber, minWidth: 28, lineHeight: 1 }}>
-                {stop.status === "complete" ? "✓" : i + 1}
+              <div style={{ fontFamily: FONTS.mono, fontSize: 18, fontWeight: 700, color: stop.status === "complete" ? C.green : stop.status === "claimed" ? C.amber : C.muted, minWidth: 28, lineHeight: 1 }}>
+                {stop.status === "complete" ? "✓" : stop.status === "claimed" ? "🚛" : i + 1}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 {stop.name && <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 2 }}>{stop.name}</div>}
@@ -1162,11 +1225,14 @@ export default function JAWSApp() {
                   style={{ ...btn(C.white, { flex: 1, border: `1px solid ${C.border}`, color: C.text }) }}>
                   📷 {currentStop.photo ? "Retake photo" : "Take photo"}
                 </button>
-                <a href={navUrl(currentStop)}
-                  target="_blank" rel="noopener noreferrer"
-                  style={{ ...btn(C.blue, { flex: 1, color: "#fff", textDecoration: "none" }) }}>
+              <button onClick={() => {
+                  updateStop(currentStop.id, { status: "claimed" });
+                  syncStopToRedis(currentStop.id, { status: "claimed" });
+                  window.open(navUrl(currentStop), "_blank");
+                }}
+                style={{ ...btn(C.blue, { flex: 1, color: "#fff", textDecoration: "none" }) }}>
                   🗺️ Navigate
-                </a>
+                </button>
               </div>
 
               <button onClick={() => markComplete(currentStop.id)}
@@ -1191,19 +1257,20 @@ export default function JAWSApp() {
         <span style={{ ...lbl, marginTop: 4 }}>All stops — tap to jump</span>
         {sortedStops.map((stop, i) => {
           const isCurrent = stop.id === currentStop?.id;
+          const isClaimed = stop.status === "claimed";
           return (
             <div key={stop.id} onClick={() => setDriverIdx(i)} style={{
               display: "flex", alignItems: "center", padding: "10px 12px",
               borderRadius: 8, marginBottom: 6, cursor: "pointer",
-              background: isCurrent ? C.amberBg : C.surface,
-              border: `1px solid ${isCurrent ? C.amber : C.border}`,
+              background: isCurrent ? C.amberBg : isClaimed ? "#FFFBEB" : C.surface,
+              border: `1px solid ${isCurrent ? C.amber : isClaimed ? C.amber : C.border}`,
               opacity: stop.status === "complete" ? 0.45 : 1, transition: "all 0.15s",
             }}>
               <div style={{
                 fontFamily: FONTS.mono, fontSize: 15, fontWeight: 700, minWidth: 26,
-                color: stop.status === "complete" ? C.green : isCurrent ? C.amber : C.muted,
+                color: stop.status === "complete" ? C.green : isClaimed ? C.amber : isCurrent ? C.amber : C.muted,
               }}>
-                {stop.status === "complete" ? "✓" : i + 1}
+                {stop.status === "complete" ? "✓" : isClaimed ? "🚛" : i + 1}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -1211,6 +1278,9 @@ export default function JAWSApp() {
                 </div>
                 {stop.status === "complete" && stop.timestamp && (
                   <div style={{ fontFamily: FONTS.mono, fontSize: 11, color: C.green }}>{stop.timestamp}</div>
+                )}
+                {isClaimed && !isCurrent && (
+                  <div style={{ fontFamily: FONTS.mono, fontSize: 11, color: C.amber }}>🚛 En route</div>
                 )}
               </div>
               <div style={{ display: "flex", gap: 4 }}>
@@ -1376,6 +1446,14 @@ export default function JAWSApp() {
               <button onClick={emailSummary} style={{ ...btn(C.s2, { border: `1px solid ${C.border}`, color: C.blue, fontSize: 13 }) }}>
                 ✉️ Email
               </button>
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <button onClick={clearRoute} style={{ ...btn(C.s2, { width: "100%", border: `1px solid ${C.red}`, color: C.red, fontSize: 13 }) }}>
+                🗑 Clear route from device
+              </button>
+              <div style={{ fontSize: 11, color: C.muted, textAlign: "center", marginTop: 5 }}>
+                Only tap after summary has been sent
+              </div>
             </div>
           </div>
         )}
@@ -1863,6 +1941,10 @@ export default function JAWSApp() {
               {completedCount}/{stops.length}
             </div>
             <div style={{ fontSize: 10, color: "#9CA3AF", letterSpacing: 2 }}>COLLECTED</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, marginTop: 3 }}>
+              <div style={{ width: 6, height: 6, borderRadius: "50%", background: C.green, animation: "gps-pulse 2s infinite" }} />
+              <span style={{ fontSize: 9, color: "#6EE7B7", letterSpacing: 1 }}>LIVE</span>
+            </div>
           </div>
         )}
       </div>
