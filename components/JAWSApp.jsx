@@ -354,15 +354,19 @@ export default function JAWSApp() {
     "4758 bonaire cay, destin, fl 32541":                               {lat:30.382809,lng:-86.401845},
     "238 kono way, destin, fl 32541":                                   {lat:30.387954,lng:-86.418911},
     "66 tarpon, destin, fl 32541":                                      {lat:30.382738,lng:-86.417153},
-    // Manual aliases — short-form keys matching spreadsheet format
+    // Short-key aliases — match exactly what the spreadsheet sends after addrKey() normalization
+    "1987 scenic a1 & a4":                                              {lat:30.37750, lng:-86.38111},
     "1987 scenic a1 & a4 miramar beach fl 32550":                       {lat:30.37750, lng:-86.38111},
     "1987 scenic a1 & a4, miramar beach, fl 32550":                     {lat:30.37750, lng:-86.38111},
+    "5055 w county hwy 30a unit 1012":                                  {lat:30.34984, lng:-86.24139},
     "5055 w county hwy 30a unit 1012 santa rosa beach fl 32459":        {lat:30.34984, lng:-86.24139},
     "5055 w county hwy 30a unit 1012, santa rosa beach, fl 32459":      {lat:30.34984, lng:-86.24139},
-    "5055 w county hwy 30a #1012 santa rosa beach fl 32459":            {lat:30.34984, lng:-86.24139},
-    "12 dune side lane santa rosa beach fl 32459":                       {lat:30.34111, lng:-86.20534},
+    "5055 w county hwy 30a #1012":                                      {lat:30.34984, lng:-86.24139},
+    "12 dune side lane":                                                 {lat:30.34111, lng:-86.20534},
+    "12 dune side lane santa rosa beach fl 32459":                      {lat:30.34111, lng:-86.20534},
     "12 dune side lane, santa rosa beach, fl 32459":                    {lat:30.34111, lng:-86.20534},
-    "54 cassine garden cir santa rosa beach fl 32459":                   {lat:30.31234, lng:-86.10738},
+    "54 cassine garden cir":                                             {lat:30.31234, lng:-86.10738},
+    "54 cassine garden cir santa rosa beach fl 32459":                  {lat:30.31234, lng:-86.10738},
     "54 cassine garden cir, santa rosa beach, fl 32459":                {lat:30.31234, lng:-86.10738},
   };
   const watchId = useRef(null);
